@@ -1,53 +1,13 @@
-local ffi = require "ffi"
-
-ffi.cdef[[
-    typedef struct timeval {
-        long  tv_sec;
-        long  tv_usec;
-    } timeval;
-
-    int gettimeofday(struct timeval *tv, void *tz);
-    int stat(const char *path, struct stat *buf);
-
-    struct stat {
-        int64_t st_dev;
-        int64_t st_ino;
-        int st_mode;
-        int st_nlink;
-        int st_uid;
-        int st_gid;
-        int64_t st_rdev;
-        int64_t st_size;
-        int64_t st_blksize;
-        int64_t st_blocks;
-        int64_t st_atime;
-        int64_t st_mtime;
-        int64_t st_ctime;
-    };
-]]
-local function get_file_modification_time(file_path)
-    local stat = ffi.new("struct stat")
-    local libc = ffi.load('libc.so')
-    if libc.stat(file_path, stat) == 0 then
-        return tonumber(stat.st_mtime)
-    else
-        return nil, "Failed to get file stat"
-    end
+local resty_lrucache = require "resty.lrucache"
+lrucache, err = resty_lrucache.new(100)
+if not lrucache then
+    ngx.log(ngx.ERR, "Failed to create lrucache: ", err)
 end
 
-local modification_time, err = get_file_modification_time("conf/black_countries.json")
-if modification_time then
-    ngx.say("File modification time: ", modification_time)
-else
-    ngx.log(ngx.ERR, "Error: ", err)
-end
-
-local function read_black_list(premature)
+local function load_config(premature)
     local json = require("cjson.safe")
-    ngx.log(ngx.ERR, "read black list")
-    if premature then
-        return
-    end
+
+    ngx.log(ngx.ERR, "load config:", ngx.worker.id())
     local file_path = "conf/black_countries.json"
     local file, err = io.open(file_path, "r")
 
@@ -63,17 +23,30 @@ local function read_black_list(premature)
         return
     end
 
-    local dict = ngx.shared.black_list_dict
-    dict:flush_all()
+    lrucache:flush_all()
     for key,value in pairs(data) do
-        dict:set(key, value)
+        lrucache:set(key, value)
     end
 end
 
-local ok, err = ngx.timer.every(5, read_black_list)
+local events = ngx.shared.config_refresh_events
+
+local function check_event(premature)
+    if premature then
+        return
+    end
+    local signal = events:get("event_signal_" .. ngx.worker.id())
+    if signal == 1 then
+        ngx.log(ngx.INFO, "Received event signal in worker ", ngx.worker.id())
+        load_config()
+        events:set("event_signal_" .. ngx.worker.id(), 0)
+    end
+end
+
+local ok, err = ngx.timer.every(1, check_event)
 if not ok then
     ngx.log(ngx.ERR, "failed to create the timer: ", err)
     return
 end
 
-read_black_list()
+load_config()

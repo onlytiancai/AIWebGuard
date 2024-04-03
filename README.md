@@ -49,3 +49,9 @@
 
     # 测试工具和 IP 库
     ./mmdbinspect -db ./GeoLite2-City_20240329/GeoLite2-City.mmdb 8.8.8.8
+
+## 参考链接
+
+- https://github.com/unixhot/waf
+- https://github.com/openresty/lua-nginx-module
+- https://moonbingbing.gitbooks.io/openresty-best-practices/content/index.html
